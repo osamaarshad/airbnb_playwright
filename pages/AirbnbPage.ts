@@ -1,8 +1,8 @@
-// pages/AirbnbPage.ts
 import { Locator, Page } from '@playwright/test';
+import { BasePage } from '../base/BasePage';
+import { TestData } from '../data/TestData';
 
-export class AirbnbPage {
-  readonly page: Page;
+export class AirbnbPage extends BasePage {
   readonly emailLoginButton: Locator;
   readonly emailInput: Locator;
   readonly continueButton: Locator;
@@ -20,16 +20,16 @@ export class AirbnbPage {
   readonly roomDetails: Locator;
 
   constructor(page: Page) {
-    this.page = page;
+    super(page);
     this.emailLoginButton = page.locator('[data-testid="social-auth-button-email"]');
     this.emailInput = page.locator('[data-testid="email-login-email"]');
     this.continueButton = page.locator('.t1dqvypu');
     this.passwordInput = page.locator('[data-testid="email-signup-password"]');
     this.locationInput = page.locator('#bigsearch-query-location-input');
     this.suggestion = page.locator('#bigsearch-query-location-suggestion-0');
-    this.checkInDate = page.locator('[aria-label="23, Wednesday, April 2025. Available. Select as check-in date."]');
-    this.checkOutDate = page.locator('button[aria-label="27, Sunday, April 2025. Available. Select as checkout date."]');
-    this.searchButton = page.locator('.c1nkokj4');
+    this.checkInDate = page.locator(`[aria-label="${TestData.checkInDateLabel}"]`).first();
+    this.checkOutDate = page.locator(`[aria-label="${TestData.checkOutDateLabel}"]`).first();
+    this.searchButton = page.locator('.siey6h7');
     this.priceElements = page.locator('._w3xh25');
     this.favoriteButtons = page.locator('.ckqgked');
     this.modal = page.locator('.b98pgng');
@@ -39,59 +39,101 @@ export class AirbnbPage {
   }
 
   async login(email: string, password: string) {
-    await this.page.goto('/login');
-    await this.emailLoginButton.click();
-    await this.emailInput.fill(email);
-    await this.continueButton.click();
-    await this.passwordInput.fill(password);
-    await this.continueButton.click();
+  try {
+    await this.navigateTo('/login');
+
+    // Wait for and click the "Continue with Email" button
+    await this.waitForElement(this.emailLoginButton);
+    await this.click(this.emailLoginButton);
+
+    // Wait for email field, then fill
+    await this.waitForElement(this.emailInput);
+    await this.fill(this.emailInput, email);
+
+    // Wait for and click "Continue"
+    await this.waitForElement(this.continueButton);
+    await this.click(this.continueButton);
+
+    
+    await this.waitForElement(this.passwordInput);  
+    await this.fill(this.passwordInput, password);
+
+    await this.waitForElement(this.continueButton);
+    await this.click(this.continueButton);
+
+    await this.waitForLoad();
+  } catch (error) {
+    console.error('Login failed:', error);
+    throw error;
   }
+}
+
 
   async searchLocation(city: string) {
-    await this.locationInput.fill(city);
-    await this.suggestion.first().waitFor();
-    const count = await this.suggestion.count();
-    for (let i = 0; i < count; i++) {
-      const text = await this.suggestion.nth(i).innerText(); //grab the text
-      if (text.includes(city)) {
-        await this.suggestion.nth(i).click({ force: true }); 
-        break;
+    try {
+      await this.fill(this.locationInput, city);
+      await this.waitForElement(this.suggestion.first());
+
+      const count = await this.getCount(this.suggestion);
+      for (let i = 0; i < count; i++) {
+        const text = await this.getText(this.suggestion.nth(i));
+        if (text.includes(city)) {
+          await this.click(this.suggestion.nth(i), { force: true });
+          break;
+        }
       }
+    } catch (error) {
+      console.error(' Search location failed:', error);
+      throw error;
     }
   }
 
   async setDatesAndSearch() {
-    await this.checkInDate.click({ force: true });
-    await this.checkOutDate.click({ force: true });
-    await this.searchButton.click();
+    try {
+      await this.click(this.checkInDate, { force: true });
+      await this.waitForElement(this.checkOutDate);
+      await this.click(this.checkOutDate, { force: true });
+      await this.click(this.searchButton);
+    } catch (error) {
+      console.error(' Set dates and search failed:', error);
+      throw error;
+    }
   }
 
   async selectCheapestRoom() {
-    await this.priceElements.first().waitFor();
-    const count = await this.priceElements.count();
-  
-    let minPrice = 5000;
-    let minIndex = -1;
-  
-    for (let i = 0; i < count; i++) {
-      const priceText = await this.priceElements.nth(i).innerText();
-      const match = priceText.match(/\$?(\d+(?:\.\d+)?)/);
-      const price = match ? parseFloat(match[1]) : NaN;    
-      if (price < minPrice) {
-        minPrice = price;
-        minIndex = i;
+    try {
+      await this.waitForElement(this.priceElements.first());
+
+      const count = await this.getCount(this.priceElements);
+      let minPrice = TestData.maxExpectedPrice;
+      let minIndex = -1;
+
+      for (let i = 0; i < count; i++) {
+        const priceText = await this.getText(this.priceElements.nth(i));
+        const match = priceText.match(/\$?(\d+(?:\.\d+)?)/);
+        const price = match ? parseFloat(match[1]) : NaN;
+
+        if (price < minPrice) {
+          minPrice = price;
+          minIndex = i;
+        }
       }
+
+      if (minIndex === -1) {
+        throw new Error('No room found under expected max price.');
+      }
+
+      await this.click(this.favoriteButtons.nth(minIndex));
+      await this.waitForElement(this.modal);
+      await this.click(this.wishlistCard);
+
+      const roomName = await this.getText(this.roomNames.nth(minIndex));
+      const roomDetail = await this.getText(this.roomDetails.nth(minIndex));
+
+      return { minPrice, minIndex, roomName, roomDetail };
+    } catch (error) {
+      console.error(' Selecting cheapest room failed:', error);
+      throw error;
     }
-  
-    await this.favoriteButtons.nth(minIndex).click();
-    await this.modal.waitFor({ state: 'visible' });
-    await this.wishlistCard.click();
-  
-    const roomName = await this.roomNames.nth(minIndex).innerText();
-    const roomDetail = await this.roomDetails.nth(minIndex).innerText();
-  
-    return { minPrice, minIndex, roomName, roomDetail }; 
   }
-  
-  
 }
